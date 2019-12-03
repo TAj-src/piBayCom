@@ -1,0 +1,4 @@
+
+#Rules file for the piBayCom device driver
+KERNEL=="piBayCom", SUBSYSTEM=="PiB", MODE="0666"
+
