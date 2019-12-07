@@ -9,7 +9,7 @@ You will need to modify the hardware a little (or at-least the lead).
   * Power it remotely (you could re-wire the TXD pin in the cable to do this, leaving this diode. It depends on the hardware variant you have)
   * Make a 5v to 3v3 resistor divider on the modem TX pin to the Pi. TCM3105 is 5v, Pi is 3v3.
 
-(you will need the Linux kernel headers for the Pi you are using - sudo apt install raspberrypi-kernel-headers)
+(You will need the Linux kernel headers for the Pi you are using - sudo apt install raspberrypi-kernel-headers)
 
 to compile, type
 
