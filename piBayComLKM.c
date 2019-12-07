@@ -95,7 +95,6 @@ static struct file_operations fops =
  *  @return returns 0 if successful
  */
 static int __init ebbchar_init(void){
-   int result = 0;
    long seconds;
    long micros;
    static struct timespec init_ts_current;
@@ -147,18 +146,6 @@ static int __init ebbchar_init(void){
    irqNumber = gpio_to_irq(RX_PIN);
    printk(KERN_INFO "piBayCom LKM: The RX pin is mapped to IRQ: %d\n", irqNumber);
 
-   // This next call requests an interrupt line
-   result = request_irq(irqNumber,             // The interrupt number requested
-                        (irq_handler_t) ebbgpio_irq_handler, // The pointer to the handler function below
-                        IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING,   // Interrupt on rising edge & falling
-                        "piBayCom_RXgpio_handler",    // Used in /proc/interrupts to identify the owner
-                        NULL);                 // The *dev_id for shared interrupt lines, NULL is okay
-
-   printk(KERN_INFO "piBayCom LKM: The interrupt request result is: %d\n", result);
-   if ( result < 0) {
-    printk(KERN_INFO "Error setting IRQ. Quitting...\n");
-    return  -EINVAL; // does it not load module?
-   }
 
    // Try to dynamically allocate a major number for the device -- more difficult but worth it
    majorNumber = register_chrdev(0, DEVICE_NAME, &fops);
@@ -259,10 +246,27 @@ static irq_handler_t ebbgpio_irq_handler(unsigned int irq, void *dev_id, struct 
  *  @param filep A pointer to a file object (defined in linux/fs.h)
  */
 static int dev_open(struct inode *inodep, struct file *filep){
+
+  static int result;
+
    if(!mutex_trylock(&ebbchar_mutex)){    /// Try to acquire the mutex (i.e., put the lock on/down)
                                           /// returns 1 if successful and 0 if there is contention
       printk(KERN_ALERT "piBayCom LKM: Device in use by another process");
       return -EBUSY;
+   }
+
+
+   // This next call requests an interrupt line
+   result = request_irq(irqNumber,             // The interrupt number requested
+                        (irq_handler_t) ebbgpio_irq_handler, // The pointer to the handler function below
+                        IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING,   // Interrupt on rising edge & falling
+                        "piBayCom_RXgpio_handler",    // Used in /proc/interrupts to identify the owner
+                        NULL);                 // The *dev_id for shared interrupt lines, NULL is okay
+
+   printk(KERN_INFO "piBayCom LKM: The interrupt request result is: %d\n", result);
+   if ( result < 0) {
+    printk(KERN_INFO "Error setting IRQ. Quitting...\n");
+    return  -EINVAL; // does it not load module?
    }
 
 
@@ -431,6 +435,8 @@ static ssize_t dev_write(struct file *filep, const char *buffer, size_t len, lof
  */
 static int dev_release(struct inode *inodep, struct file *filep){
    mutex_unlock(&ebbchar_mutex);          /// Releases the mutex (i.e., the lock goes up)
+   free_irq(irqNumber, NULL);               // Free the IRQ number, no *dev_id required in this case
+   printk(KERN_INFO "piBayCom LKM: RX Interrupt Stopped\n");
    printk(KERN_INFO "piBayCom LKM: Device successfully closed\n");
    return 0;
 }
