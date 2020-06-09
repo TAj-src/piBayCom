@@ -3,15 +3,23 @@
 #include <linux/device.h>         // Header to support the kernel Driver Model
 #include <linux/kernel.h>         // Contains types, macros, functions for the kernel
 #include <linux/fs.h>             // Header for the Linux file system support
-#include <linux/uaccess.h>          // Required for the copy to user function
-#include <linux/mutex.h>	         /// Required for the mutex functionality
+#include <linux/uaccess.h>        // Required for the copy to user function
+#include <linux/mutex.h>          // Required for the mutex functionality
 #include <linux/spinlock.h>
-#include <linux/gpio.h>                 // Required for the GPIO functions
+#include <linux/gpio.h>           // Required for the GPIO functions
 #include <linux/interrupt.h>      // Required for the IRQ code
-#include <linux/time.h>       // Using the clock to measure time between button presses
+#include <linux/time.h>           // Using the clock to measure time between button presses
 #include <linux/delay.h>
-#define  DEVICE_NAME "piBayCom"    ///< The device will appear at /dev/ebbchar using this value
-#define  CLASS_NAME  "PiB"        ///< The device class -- this is a character device driver
+#define  DEVICE_NAME "piBayCom"
+#define  CLASS_NAME  "PiB"
+
+
+MODULE_LICENSE("GPL");                  //< The license type -- this affects available functionality
+MODULE_AUTHOR("G7TAJ");                 //< The author -- visible when you use modinfo
+MODULE_DESCRIPTION("Linux BayCom Kernel Module for RasPi");  //< The description -- see modinfo
+MODULE_VERSION("0.1.7a");
+
+
 
 static DEFINE_MUTEX(ebbchar_mutex);  /// A macro that is used to declare a new mutex that is visible in this file
                                      /// results in a semaphore variable ebbchar_mutex with value 1 (unlocked)
@@ -30,16 +38,11 @@ static DEFINE_SPINLOCK(flop_lock);
 unsigned long flags;
 static short bittime;
 static int TXDELAY;
-
-MODULE_LICENSE("GPL");            ///< The license type -- this affects available functionality
-MODULE_AUTHOR("G7TAJ");    ///< The author -- visible when you use modinfo
-MODULE_DESCRIPTION("Linux BayCom Kernel Module for RasPi");  ///< The description -- see modinfo
-MODULE_VERSION("0.1");            ///< A version number to inform users
-
+static int BAUD;
 static short bittime_arr[1025];
 
 static int    majorNumber;                  ///< Stores the device number -- determined automatically
-static short  arr_pos; 				// how many elements in arr
+static short  arr_pos;                          // how many elements in arr
 static int    numberOpens = 0;              ///< Counts the number of times the device is opened
 static struct class*  ebbcharClass  = NULL; ///< The device-driver class struct pointer
 static struct device* ebbcharDevice = NULL; ///< The device-driver device struct pointer
@@ -53,19 +56,25 @@ static int TX_PIN = 0;
 static int PTT_PIN = 0;
 
  module_param(RX_PIN, int, S_IRUGO);
- MODULE_PARM_DESC(RX_PIN, "BayCom RX PIN Pi assignment");
+ MODULE_PARM_DESC(RX_PIN, "piBayCom RX PIN Pi assignment");
  module_param(TX_PIN, int, S_IRUGO);
- MODULE_PARM_DESC(TX_PIN, "BayCom TX PIN Pi assignment");
+ MODULE_PARM_DESC(TX_PIN, "piBayCom TX PIN Pi assignment");
  module_param(PTT_PIN, int, S_IRUGO);
- MODULE_PARM_DESC(PTT_PIN, "BayCom PTT PIN Pi assignment");
+ MODULE_PARM_DESC(PTT_PIN, "piBayCom PTT PIN Pi assignment");
+ module_param(BAUD, int, S_IRUGO);
+ MODULE_PARM_DESC(BAUD, "piBayCom BAUD Rate (1200 / 300)");
 
 static unsigned int irqNumber;          ///< Used to share the IRQ number within this file
-
-static struct timespec ts_last, ts_current, ts_diff;  ///< timespecs from linux/time.h (has nano precision)
-
+static struct timespec ts_last, ts_current, ts_diff;
 
 /// Function prototype for the custom IRQ handler function -- see below for the implementation
 static irq_handler_t  ebbgpio_irq_handler(unsigned int irq, void *dev_id, struct pt_regs *regs);
+
+
+#define IOCTL_CAL_DROP _IO( 'q' , 0 )
+#define IOCTL_CAL_HIGH _IO( 'q' , 1 )
+#define IOCTL_CAL_LOW _IO( 'q' , 2 )
+#define IOCTL_CAL_DIDDLE _IO( 'q' , 3 )
 
 
 // The prototype functions for the character driver -- must come before the struct definition
@@ -74,6 +83,8 @@ static int     dev_release(struct inode *, struct file *);
 static ssize_t dev_read(struct file *, char *, size_t, loff_t *);
 static ssize_t dev_write(struct file *, const char *, size_t, loff_t *);
 static void __exit ebbchar_exit(void);
+static long   baycom_ioctl(struct file *filp, unsigned int cmd, unsigned long argp);
+
 
 /** @brief Devices are represented as file structure in the kernel. The file_operations structure from
  *  /linux/fs.h lists the callback functions that you wish to associated with your file operations
@@ -86,7 +97,55 @@ static struct file_operations fops =
    .read = dev_read,
    .write = dev_write,
    .release = dev_release,
+   .unlocked_ioctl   = baycom_ioctl,
 };
+
+
+/* ioctl - CAL control routeine */
+static long baycom_ioctl(struct file *filp, unsigned int cmd, unsigned long argp) {
+int x;
+
+        switch (cmd) {
+                default:
+                        printk(KERN_INFO "piBayCom LKM: CAL-MODE : default (%d)\n",cmd);
+                        break;
+
+                case IOCTL_CAL_DROP :   //PTT off
+                        gpio_set_value(PTT_PIN, LOW);          // drop PTT
+                        printk(KERN_INFO "piBayCom LKM: CAL-MODE : PTT Dropped\n");
+                        break;
+
+                case IOCTL_CAL_HIGH  : // PTT a 1
+                        gpio_set_value(PTT_PIN, HIGH);         // raise PTT
+                        gpio_set_value(TX_PIN, HIGH);
+                        printk(KERN_INFO "piBayCom LKM: CAL-MODE : PTT HIGH\n");
+                        break;
+
+                case IOCTL_CAL_LOW :    // PTT a 0
+                        gpio_set_value(PTT_PIN, HIGH);         // raise PTT
+                        gpio_set_value(TX_PIN, LOW);
+                        printk(KERN_INFO "piBayCom LKM: CAL-MODE : PTT LOW\n");
+                        break;
+
+                case IOCTL_CAL_DIDDLE : // PTT  a diddle
+                        printk(KERN_INFO "piBayCom LKM: CAL-MODE : PTT DIDDLE\n");
+                        gpio_set_value(PTT_PIN, HIGH);         // raise PTT
+
+                        for (x=1 ; x < 10000; x++) {
+                                gpio_set_value(TX_PIN, LOW);
+                                udelay(bittime);
+                                gpio_set_value(TX_PIN, HIGH);
+                                udelay(bittime);
+                        }
+                        gpio_set_value(PTT_PIN, LOW);         // drop PTT
+                        printk(KERN_INFO "piBayCom LKM: CAL-MODE : PTT Dropped\n");
+
+                        break;
+        }
+    return 0;
+}
+
+
 
 /** @brief The LKM initialization function
  *  The static keyword restricts the visibility of the function to within this C file. The __init
@@ -101,6 +160,7 @@ static int __init ebbchar_init(void){
 
    printk(KERN_INFO "piBayCom LKM: Initializing the RX GPIO LKM\n");
 
+   if (BAUD == 0) BAUD=1200; // if its not specified, assume 1200 BAUD
 
    if ( RX_PIN == 0 || TX_PIN ==0 || PTT_PIN == 0 || RX_PIN==TX_PIN || RX_PIN==PTT_PIN || TX_PIN==PTT_PIN) {
       printk(KERN_WARNING "piBayCom LKM: Error - PIN assignments wrong\r\npiBayCom LKM: Moduie NOT loaded\r\n");
@@ -111,38 +171,31 @@ static int __init ebbchar_init(void){
    getnstimeofday(&ts_last);                          // set the last time to be the current time
    ts_diff = timespec_sub(ts_last, ts_last);          // set the initial time difference to be 0
 
-// find bittime
-   udelay(1000);			  //sleep 1 sec - seems off!
+// find bittime  - should be about 833 for 1200 BAUD;
 
+   udelay(1000);                          //sleep 1 sec - seems off!
    getnstimeofday(&init_ts_current);      // Get the time again
-
    seconds = (init_ts_current.tv_sec - ts_last.tv_sec);
    micros = ((seconds * 100000000) + init_ts_current.tv_nsec) - (ts_last.tv_nsec);
+   bittime = micros / BAUD;
 
-// printk(KERN_INFO "piBayCom LKM: micros=%ld\n", micros);
+   printk(KERN_INFO "piBayCom LKM: BITtime =%d (%d BAUD)\n", bittime, BAUD);
 
-   bittime = micros / 1200;
-
-   printk(KERN_INFO "piBayCom LKM: BITtime =%d\n", bittime);
-
-  // bittime=833;
-
-
-   gpio_request(RX_PIN, "sysfs");       // Set up the gpioButton
+   gpio_request(RX_PIN, "sysfs");       // Set up the gpio
    gpio_direction_input(RX_PIN);        // Set the RX GPIO to be an input
-   gpio_export(RX_PIN, false);          // Causes gpio115 to appear in /sys/class/gpio
+   gpio_export(RX_PIN, false);          // Causes gpio to appear in /sys/class/gpio
                      // the bool argument prevents the direction from being changed
 
    gpio_request(TX_PIN, "sysfs");
-   gpio_direction_output(TX_PIN, LOW); // Set the gpio to be in output mode and on // gpio_set_value(gpioLED,
-   gpio_export(TX_PIN, false);             // Causes gpio49 to appear in /sys/class/gpio
+   gpio_direction_output(TX_PIN, LOW);  // Set the gpio to be in output
+   gpio_export(TX_PIN, false);          // Causes gpio to appear in /sys/class/gpio
 
    gpio_request(PTT_PIN, "sysfs");
-   gpio_direction_output(PTT_PIN, LOW); // Set the gpio to be in output mode and on // gpio_set_value(gpioLED,
-   gpio_export(PTT_PIN, false);             // Causes gpio49 to appear in /sys/class/gpio
+   gpio_direction_output(PTT_PIN, LOW); // Set the gpio to be in output mode
+   gpio_export(PTT_PIN, false);         // Causes gpio to appear in /sys/class/gpio
 
 
-   // GPIO numbers and IRQ numbers are not the same! This function performs the mapping for us
+   // GPIO numbers and IRQ numbers are not the same! This function performs the mapping
    irqNumber = gpio_to_irq(RX_PIN);
    printk(KERN_INFO "piBayCom LKM: The RX pin is mapped to IRQ: %d\n", irqNumber);
 
@@ -185,9 +238,16 @@ static int __init ebbchar_init(void){
  *  code is used for a built-in driver (not a LKM) that this function is not required.
  */
 static void __exit ebbchar_exit(void){
+
+
+   if(!mutex_trylock(&ebbchar_mutex)){  // check if device is open (has mutex lock) -check if we need to free IRQ
+      printk(KERN_ALERT "piBayCom LKM: Device was open, so cleaning IRQ");
+      free_irq(irqNumber, NULL);
+   }
+
+
    mutex_destroy(&ebbchar_mutex);        /// destroy the dynamically-allocated mutex
 
-   free_irq(irqNumber, NULL);               // Free the IRQ number, no *dev_id required in this case
    gpio_unexport(RX_PIN);               // Unexport the RX GPIO
    gpio_unexport(TX_PIN);               // Unexport the TX GPIO
    gpio_unexport(PTT_PIN);               // Unexport the PTT GPIO
@@ -226,11 +286,9 @@ static irq_handler_t ebbgpio_irq_handler(unsigned int irq, void *dev_id, struct 
 
    bittime_arr[arr_pos++]= ts_diff.tv_nsec/1000;
 
-//   printk(KERN_INFO "GPIO_TEST: Interrupt! (button state is %d (%lu))\n",  gpio_get_value(gpioButton), ts_diff.tv_nsec/1000);
-
    if (arr_pos > 1024) {
-	printk(KERN_INFO "piBayCom LKM: RX Overrun\n");
-	arr_pos=0;
+        printk(KERN_INFO "piBayCom LKM: RX Overrun\n");
+        arr_pos=0;
    }
 
    spin_unlock_irqrestore(&flop_lock, flags);
@@ -257,9 +315,9 @@ static int dev_open(struct inode *inodep, struct file *filep){
 
 
    // This next call requests an interrupt line
-   result = request_irq(irqNumber,             // The interrupt number requested
-                        (irq_handler_t) ebbgpio_irq_handler, // The pointer to the handler function below
-                        IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING,   // Interrupt on rising edge & falling
+   result = request_irq(irqNumber,                                      // The interrupt number requested
+                        (irq_handler_t) ebbgpio_irq_handler,            // The pointer to the handler function below
+                        IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING,     // Interrupt on rising edge & falling
                         "piBayCom_RXgpio_handler",    // Used in /proc/interrupts to identify the owner
                         NULL);                 // The *dev_id for shared interrupt lines, NULL is okay
 
@@ -274,11 +332,6 @@ static int dev_open(struct inode *inodep, struct file *filep){
    printk(KERN_INFO "piBayCom LKM: Device has been opened %d time(s)\n", numberOpens);
    return 0;
 }
-
-
-
-
-
 
 
 /** @brief This function is called whenever device is being read from user space i.e. data is
@@ -302,8 +355,8 @@ static ssize_t dev_read(struct file *filep, char *buffer, size_t len, loff_t *of
 
    if (error_count==0){            // if true then have success
 //      printk(KERN_INFO "EBBChar: Sent %d elements to the user\n", arr_pos);
-	total=arr_pos*2;
-	arr_pos=0;
+        total=arr_pos*2;
+        arr_pos=0;
         spin_unlock_irqrestore(&flop_lock, flags);
       return (total);  // clear the position to the start and return 0
    }
@@ -316,10 +369,6 @@ static ssize_t dev_read(struct file *filep, char *buffer, size_t len, loff_t *of
 
 
 static int decode_user_msg( char *buffer, size_t len) {
-
-//   char buff[]; // could be a large number of bits!
-//   char * buff;
-//   int j = 0;
 
    int BUFF_LEN;
    int x;
@@ -335,34 +384,12 @@ static int decode_user_msg( char *buffer, size_t len) {
    }
 
 
-/*
-   buff = kmalloc(BUFF_LEN, GFP_KERNEL);
-
-   if (!buff)
-    return -ENOMEM;
-
-   printk(KERN_INFO "piBaycom LKM: size of buff=%d\n", BUFF_LEN);
-
-   for (a=0; a< BUFF_LEN; a++) {
-	j += sprintf( buff+j, "%x", buffer[a] );
-   }
-
-   printk(KERN_INFO "piBaycom LKM: %s\n", buff);
-   kfree(buff);
-*/
-
    TXDelayFlags = ( TXDELAY * 1000 ) / ( bittime * 8);
-
-/*
-   printk(KERN_INFO "piBaycom LKM: PTT bit delay=%d Flags=%d\r\n", bittime, TXDelayFlags);
-*/
-//   printk(KERN_INFO "piBaycom LKM: PTT ON\r\n");
-
    Level=LOW;
 
-   gpio_set_value(PTT_PIN, HIGH);	   // raise PTT
+   gpio_set_value(PTT_PIN, HIGH);          // raise PTT
 
-					   // PTT delay...send number of flags
+   // PTT delay...send number of flags
    for (x=0; x < TXDelayFlags; x++) {
       gpio_set_value(TX_PIN, LOW);
       udelay(bittime);
@@ -394,9 +421,6 @@ static int decode_user_msg( char *buffer, size_t len) {
 
    // Lower PTT
    gpio_set_value(PTT_PIN, LOW);
-
-//   printk(KERN_INFO "piBaycom LKM: PTT OFF\r\n");
-
    return 0;
 }
 
@@ -415,10 +439,14 @@ static ssize_t dev_write(struct file *filep, const char *buffer, size_t len, lof
 
 //   printk(KERN_INFO "piBayCom LKM: Received %zu bytes from piBayComKISS\n", len);
 
+
+  // If [0] ==FF then KISS params. Currently only sending/setting TXDelay - probably better to do
+ //  this via the IOCTL routines now.
+	
   if ( buffer[0]==0xff && len==2) {
-//	printk(KERN_INFO "TXDelay Parameter = %dmSec\n", buffer[1]*10);
-	TXDELAY = buffer[1]*10;
-	return len;
+//      printk(KERN_INFO "TXDelay Parameter = %dmSec\n", buffer[1]*10);
+        TXDELAY = buffer[1]*10;
+        return len;
   }
 
   decode_user_msg( (char *)buffer,len);
@@ -440,10 +468,6 @@ static int dev_release(struct inode *inodep, struct file *filep){
    printk(KERN_INFO "piBayCom LKM: Device successfully closed\n");
    return 0;
 }
-
-
-
-
 
 /** @brief A module must use the module_init() module_exit() macros from linux/init.h, which
  *  identify the initialization function at insertion time and the cleanup function (as
