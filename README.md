@@ -59,10 +59,10 @@ With the kernel module loaded, run :
 
 You get 4 options.
 
- 0 = disable PTT
- 1 = Send HIGH tone + PTT
- 2 = Send LOW tone + PTT
- 3 = Send alternate diddle tones for ~15seconds + PTT
+	0 = disable PTT
+ 	1 = Send HIGH tone + PTT
+ 	2 = Send LOW tone + PTT
+ 	3 = Send alternate diddle tones for ~15seconds + PTT
 
 Note: standard BayCom modems do not mute the TX line when PTT is LOW, so they always output the last tone.
 
