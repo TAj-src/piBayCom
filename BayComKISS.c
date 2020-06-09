@@ -1,17 +1,17 @@
 /*********************************************************
  *
- * 	G7TAJ BayCom Packet KISS driver for RasPi - Copyright � 2019
- *	Original BayCom code Copyright � 2001-2019 John Wiseman G8BPQ
+ *      G7TAJ BayCom Packet KISS driver for RasPi - Copyright � 2019
+ *      Original BayCom code Copyright � 2001-2019 John Wiseman G8BPQ
  *
- *	06- 2019:	v0.1a
- *			Wokring, stable with cmdline args
- *      24-09-2019:	Aded LastDCD=True to stop TX directly fater TX without CSMA
- *      26-09-2019:	Corrected KISSACK as it was ACKing everything
- *			even not ACK frames
- *	15/10/2019:     Changed to Linux Kernel Module version, so this attached to that
- *			and provides a KISS interface out
- *      17/10/2019:	Fixed TCP port disc/re-connect issue
- *
+ *      06- 2019:       v0.1a
+ *                      Wokring, stable with cmdline args
+ *      24-09-2019:     Aded LastDCD=True to stop TX directly fater TX without CSMA
+ *      26-09-2019:     Corrected KISSACK as it was ACKing everything
+ *                      even not ACK frames
+ *      15/10/2019:     Changed to Linux Kernel Module version, so this attached to that
+ *                      and provides a KISS interface out
+ *      17/10/2019:     0.1.6a Fixed TCP port disc/re-connect issue
+ *      09/06/2020:     0.1.7a - Added Calibration routine via IOCTL and fixed IRQ free issue
  *
  *
  *
@@ -37,7 +37,7 @@
 #include <sys/time.h>
 
 //#define DEBUG
-#define VERSION "0.1.6a\0"
+#define VERSION "0.1.7a\0"
 
 
 typedef int BOOL;
@@ -71,10 +71,10 @@ int TXCOUNT=10;
 #define MAXMSG  512  //max msg on KISS TCP Port
 
 struct TX_Q {
-    BOOL ACK_FRAME;			// True for ACK
-    int FrameID_1;			// KISS Frame ID
-    int FrameID_2;			// KISS Frame ID
-    UCHAR TXBuff[MaxFrameLen +10];	// What we want to send
+    BOOL ACK_FRAME;                     // True for ACK
+    int FrameID_1;                      // KISS Frame ID
+    int FrameID_2;                      // KISS Frame ID
+    UCHAR TXBuff[MaxFrameLen +10];      // What we want to send
 };
 
 struct TX_Q ** TX_Queue = NULL;
@@ -113,18 +113,18 @@ struct BAYINFO
         UCHAR TxBuffer[TxBufferLen];
         int TxBlockPtr;
 
-	BOOL TXState;					// We are TXing
+        BOOL TXState;                                   // We are TXing
         int TXOneBits;                                  // Count of consecutive 1 bits (for stuffing)
-	int RxZeroBits;					// count of consecutive 0 bits
-	int RXERRORS;					// Numbers of port RX errors
-	int RXOverruns;					// Number of RX overruns
-	int gooddecodes;				// number of frames we'd decoded OK
+        int RxZeroBits;                                 // count of consecutive 0 bits
+        int RXERRORS;                                   // Numbers of port RX errors
+        int RXOverruns;                                 // Number of RX overruns
+        int gooddecodes;                                // number of frames we'd decoded OK
 
-	BOOL FULLDUPLEX;				// fullduplex
-	UINT PERSISTANCE;				// Persistance
-	UINT TXDELAY;
-	UINT RXBytes;			// Total bytes RXed
-	UINT TXBytes;			// Total bytes TXed
+        BOOL FULLDUPLEX;                                // fullduplex
+        UINT PERSISTANCE;                               // Persistance
+        UINT TXDELAY;
+        UINT RXBytes;                   // Total bytes RXed
+        UINT TXBytes;                   // Total bytes TXed
 };
 
 BOOL KISSFRAME_START=FALSE;
@@ -172,12 +172,13 @@ unsigned short CRCTAB[256] = {
 //#define KISSPORT 8616
 
 int KISSPORT = 99; //default value
+int BAUD = 1200;
 
 #define BUFFER_MAX 50
 int fd[32] = {0};
 int KISS_CONNECTED = FALSE;
 
-int LKM_fd;		// LKM file handle
+int LKM_fd;             // LKM file handle
 
 #define BYTE_TO_BINARY_PATTERN "%c%c%c%c%c%c%c%c"
 #define BYTE_TO_BINARY(byte)  \
@@ -198,15 +199,15 @@ void RemoveFrom_TX_Q(struct BAYINFO * Baycom);
 int openSocket() {
 
         int sockfd;
-	struct sockaddr_in my_addr;    /* my address information */
+        struct sockaddr_in my_addr;    /* my address information */
 
 
         if ((sockfd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0)) == -1) {
             perror("socket");
             exit(1);
         }
-	if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &(int){ 1 }, sizeof(int)) < 0)
-	    perror("setsockopt(SO_REUSEADDR) failed");
+        if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &(int){ 1 }, sizeof(int)) < 0)
+            perror("setsockopt(SO_REUSEADDR) failed");
 
         my_addr.sin_family = AF_INET;         /* host byte order */
         my_addr.sin_port = htons(KISSPORT);     /* short, network byte order */
@@ -223,8 +224,8 @@ int openSocket() {
             exit(1);
         }
 
-	int flags = fcntl(sockfd, F_GETFL);
-	fcntl(sockfd, F_SETFL, flags | O_NONBLOCK);
+        int flags = fcntl(sockfd, F_GETFL);
+        fcntl(sockfd, F_SETFL, flags | O_NONBLOCK);
 
  return sockfd;
 
@@ -267,10 +268,10 @@ void get_toggles(int fd) {
 
    x=0;
    for (x=0;x < LKM_BUFFER_LENGTH; x++) {
-	if (LKM_receive[x] == 0) {
-		break;
-	} else {
-  	rxbuff[bitsRXed++]=LKM_receive[x];
+        if (LKM_receive[x] == 0) {
+                break;
+        } else {
+        rxbuff[bitsRXed++]=LKM_receive[x];
        }
    }
 
@@ -361,34 +362,34 @@ void SendtoBaycom(struct BAYINFO * Baycom)
         int ret, retcode;
         int Ptr = 0;
         int a=0;
-	int x;
-	pthread_t thread_id = pthread_self();
-	struct sched_param params;
+        int x;
+        pthread_t thread_id = pthread_self();
+        struct sched_param params;
 
 
 #ifdef DEBUG
-	printf("Baycom Writing %d bits\r\n", Baycom->TxBlockPtr);
-	printf("Sending %d bits (in bytes) to LKM\r\n", Baycom->TxBlockPtr);
+        printf("Baycom Writing %d bits\r\n", Baycom->TxBlockPtr);
+        printf("Sending %d bits (in bytes) to LKM\r\n", Baycom->TxBlockPtr);
 #endif
 
-	UINT tmpPtr= Baycom->TxBlockPtr;
+        UINT tmpPtr= Baycom->TxBlockPtr;
 
 #ifdef DEBUG
-	int b=0;
+        int b=0;
         while(tmpPtr!=0) {
            printf("%d", Baycom->TxBuffer[b++]);
-	   if ( (tmpPtr % 7) == 0 ) printf(" ");
+           if ( (tmpPtr % 7) == 0 ) printf(" ");
            tmpPtr--;                // continue through
         }
-	printf("\r\ntotal=%d\r\n",b);
+        printf("\r\ntotal=%d\r\n",b);
 #endif
 
 
-	ret = write(LKM_fd, (char *)Baycom->TxBuffer, Baycom->TxBlockPtr); // Send the string to the LKM (byte is 2)
-	if (ret < 0){
-      		perror("Failed to write the message to the device.");
-      		return;
-   	}
+        ret = write(LKM_fd, (char *)Baycom->TxBuffer, Baycom->TxBlockPtr); // Send the string to the LKM (byte is 2)
+        if (ret < 0){
+                perror("Failed to write the message to the device.");
+                return;
+        }
 
 
 
@@ -397,27 +398,27 @@ void SendtoBaycom(struct BAYINFO * Baycom)
 
      if ( TX_Queue[0]->ACK_FRAME) { // ACK frame
 
-	     UCHAR tmpbuf[5];
-	#ifdef DEBUG
-	     printf("*** SENDING KISS ACK Frame ID=%02x %02x\r\n", TX_Queue[0]->FrameID_1, TX_Queue[0]->FrameID_2);
-	#endif
-	     tmpbuf[0]=FEND;
-	     tmpbuf[1]=0x0C; //ACK frame
-	     tmpbuf[2]=TX_Queue[0]->FrameID_1;
-	     tmpbuf[3]=TX_Queue[0]->FrameID_2;
-	     tmpbuf[4]=FEND;
+             UCHAR tmpbuf[5];
+        #ifdef DEBUG
+             printf("*** SENDING KISS ACK Frame ID=%02x %02x\r\n", TX_Queue[0]->FrameID_1, TX_Queue[0]->FrameID_2);
+        #endif
+             tmpbuf[0]=FEND;
+             tmpbuf[1]=0x0C; //ACK frame
+             tmpbuf[2]=TX_Queue[0]->FrameID_1;
+             tmpbuf[3]=TX_Queue[0]->FrameID_2;
+             tmpbuf[4]=FEND;
 
 
-	    if ( (send(KISS_CONNECTED, tmpbuf, 5, 0) == -1)) {
-	        printf("##### KISS Socket closed ####\r\n");
-	        close(KISS_CONNECTED);
-	        KISS_CONNECTED=0;
-	     } else {
-	#ifdef DEBUG
-	      printf("KISS frame sent OK\r\n");
-	#endif
+            if ( (send(KISS_CONNECTED, tmpbuf, 5, 0) == -1)) {
+                printf("\r\n################################################### KISS Socket closed ####\r\n");
+                close(KISS_CONNECTED);
+                KISS_CONNECTED=0;
+             } else {
+        #ifdef DEBUG
+              printf("KISS frame sent OK\r\n");
+        #endif
 
-	     }
+             }
       } //send ACK if needed
 
 #ifdef DEBUG
@@ -460,12 +461,11 @@ void CheckTX(struct BAYINFO * Baycom)
 {
   pthread_t thread_id;
 
-  TXCOUNT=10;
 
         if (Baycom->fromBPQ_Q == 0 || Baycom->TXState) {
-	        //printf("Nothing to send\r\n");
+                //printf("Nothing to send\r\n");
                 return;
-	}
+        }
 
         if (Baycom->FULLDUPLEX == 0)
         {
@@ -473,28 +473,28 @@ void CheckTX(struct BAYINFO * Baycom)
 
                 if (Baycom->DCD) {
 #ifdef DEBUG
-			printf("\r\n<*** DCD BLOCKED ***>\r\n");
+                        printf("\r\n<*** DCD BLOCKED ***>\r\n");
 #endif
-			Baycom->LastDCD =1; // tried but busy, so DCD drops, csma withh happen
+                        Baycom->LastDCD =1; // tried but busy, so DCD drops, csma withh happen
                         return;
-		}
+                }
                 // if DCD has just dropped, do csma. If not, just transmit
 
                 if (Baycom->LastDCD)
                 {
                         UINT Random = rand();
 #ifdef DEBUG
-			printf("checking PERSISTANCE (%d)", LOBYTE(Random));
+                        printf("checking PERSISTANCE (%d)", LOBYTE(Random));
 #endif
                         if (LOBYTE(Random) > Baycom->PERSISTANCE) {
 #ifdef DEBUG
-				printf(" - NOPE\n");
+                                printf(" - NOPE\n");
 #endif
                                 return;
-			}
-			Baycom->LastDCD=0;
+                        }
+                        Baycom->LastDCD=0;
 #ifdef DEBUG
-			printf(" - YEP\n");
+                        printf(" - YEP\n");
 #endif
 
                 }
@@ -502,24 +502,24 @@ void CheckTX(struct BAYINFO * Baycom)
 
         // ok to send
 
-	Baycom->TXState=TRUE;  //We're now in TXState
+        Baycom->TXState=TRUE;  //We're now in TXState
         Baycom->TxBlockPtr = 0;
 
 
-		UCHAR * buffptr=calloc(MaxFrameLen, sizeof(UCHAR));
-		memcpy(buffptr, TX_Queue[0]->TXBuff, MaxFrameLen);
+                UCHAR * buffptr=calloc(MaxFrameLen, sizeof(UCHAR));
+                memcpy(buffptr, TX_Queue[0]->TXBuff, MaxFrameLen);
 
 
                 int txlen=buffptr[0]-1; // dont include the size byte [0]
 
 #ifdef DEBUG
-		printf("\r\nFramelen=%d\r\n",txlen);fflush(stdout);
+                printf("\r\nFramelen=%d\r\n",txlen);fflush(stdout);
 #endif
 
-		buffptr++; //move passed frame length at pos 0
+                buffptr++; //move passed frame length at pos 0
                 EncodePacket(Baycom, &buffptr[0], txlen);
-		buffptr--;
-		free(buffptr);
+                buffptr--;
+                free(buffptr);
 
         // EncodePacket adds a starting flag, but not an ending one, so successive packets can be sent with a single flag
         // between them. So at end add a teminating flag and a pad to give txtail
@@ -528,10 +528,10 @@ void CheckTX(struct BAYINFO * Baycom)
         AddTxByteDirect(Baycom, 0xff);                  // Tail Padding
         AddTxByteDirect(Baycom, 0xff);                  // Tail Padding
 
-	Baycom->TXBytes += txlen; 		// Update total data transfered (dont include start flag & end flag + padding)
+        Baycom->TXBytes += txlen;               // Update total data transfered (dont include start flag & end flag + padding)
 
-	pthread_create(&thread_id, NULL, (void * (*)(void*))SendtoBaycom, (void *)Baycom);
-	pthread_detach(thread_id);
+        pthread_create(&thread_id, NULL, (void * (*)(void*))SendtoBaycom, (void *)Baycom);
+        pthread_detach(thread_id);
 }
 
 
@@ -552,18 +552,18 @@ void send_KISS( UCHAR * Frame) {
      for (x=2; x< Len+2; x++) {
 
        switch (Msg[1]) {
-  	case	FESC:
-		tmpbuf[y++]=FESC;
-//	        printf("%02x ",tmpbuf[y-1]);
-		tmpbuf[y]=TFESC;
-		break;
+        case    FESC:
+                tmpbuf[y++]=FESC;
+//              printf("%02x ",tmpbuf[y-1]);
+                tmpbuf[y]=TFESC;
+                break;
         case    FEND:
                 tmpbuf[y++]=FESC;
-//	        printf("%02x ",tmpbuf[y-1]);
+//              printf("%02x ",tmpbuf[y-1]);
                 tmpbuf[y]=TFEND;
                 break;
-	default:
-		tmpbuf[y]=Msg[1];
+        default:
+                tmpbuf[y]=Msg[1];
        }
 
      //  printf("%02x ",tmpbuf[y]);
@@ -584,10 +584,10 @@ void send_KISS( UCHAR * Frame) {
 #endif
 
     if ( (send(KISS_CONNECTED, tmpbuf, y+1, 0) == -1)) {
-	printf("#### KISS Socket closed ####\r\n");
-	fflush(stdout);
-	close(KISS_CONNECTED);
-	KISS_CONNECTED=0;
+        printf("#### KISS Socket closed ####\r\n");
+        fflush(stdout);
+        close(KISS_CONNECTED);
+        KISS_CONNECTED=0;
      } else {
 #ifdef DEBUG
       printf("KISS frame sent OK\r\n");
@@ -600,91 +600,95 @@ void send_KISS( UCHAR * Frame) {
 
 void DecodeCalls(UCHAR * RxFrame, int RXFrameLen, int TXRX) {
 
-	// DEBUG PRINT SOME FRAME INFO
-	time_t t = time(NULL);
-	struct tm *tm = localtime(&t);
-	char s[64];
-	int a;
-	int end;
-	UINT ssid;
+        // DEBUG PRINT SOME FRAME INFO
+        time_t t = time(NULL);
+        struct tm *tm = localtime(&t);
+        char s[64];
+        int a;
+        int end;
+        UINT ssid;
 
-	assert(strftime(s, sizeof(s), "%c", tm));
-	printf("[%s] ", s);
-	printf("%s: ", TXRX == 1 ? "T" : "R");
-	//from call
-	for (a = 7; a <= 12; a++) {
-		if ( RxFrame[a] != 0x40 )
-        		printf("%c", RxFrame[a] >>1);
-	}
+        assert(strftime(s, sizeof(s), "%c", tm));
+        printf("[%s] ", s);
+        printf("%s: ", TXRX == 1 ? "T" : "R");
+        //from call
+        for (a = 7; a <= 12; a++) {
+                if ( RxFrame[a] != 0x40 )
+                        printf("%c", RxFrame[a] >>1);
+        }
 
-	ssid = RxFrame[13];
-	ssid = (ssid >>1);
-	if ( (ssid & 0x0F) != 0)
-      	printf("-%d", (ssid & 0x0F) ); //SSID
+        ssid = RxFrame[13];
+        ssid = (ssid >>1);
+        if ( (ssid & 0x0F) != 0)
+        printf("-%d", (ssid & 0x0F) ); //SSID
 
-	printf(" > ");
+        printf(" > ");
 
-	//to call
-	for (a = 0; a <=5 ; a++) {
-   		if ( RxFrame[a] != 0x40 )
-		     	printf("%c", RxFrame[a] >>1);
-  	}
-	ssid = RxFrame[6] >>1;
-	if ( (ssid & 0x0F ) != 0)
-		printf("-%d", ssid & 0x0F ); //SSID
+        //to call
+        for (a = 0; a <=5 ; a++) {
+                if ( RxFrame[a] != 0x40 )
+                        printf("%c", RxFrame[a] >>1);
+        }
+        ssid = RxFrame[6] >>1;
+        if ( (ssid & 0x0F ) != 0)
+                printf("-%d", ssid & 0x0F ); //SSID
 
-	int framepos=14;
-	if ( (RxFrame[framepos-1] & 0x01) == 0 ) { //dest call has DIGI? LSB==0
-		BOOL finished=FALSE;
-		while ( !finished) {
-			printf(", ");
-		        for (a = framepos; a <= framepos+5; a++) {
-        	        	if ( RxFrame[a] != 0x40 )
-                	          printf("%c", RxFrame[a] >>1); //from call
-		        }
-			ssid = RxFrame[framepos+6] >>1;
-			if ( (ssid & 0x0F) !=  0)
-			        printf("-%d", ssid & 0x0F ); //SSID
+        int framepos=14;
+        if ( (RxFrame[framepos-1] & 0x01) == 0 ) { //dest call has DIGI? LSB==0
+                BOOL finished=FALSE;
+                while ( !finished) {
+                        printf(", ");
+                        for (a = framepos; a <= framepos+5; a++) {
+                                if ( RxFrame[a] != 0x40 )
+                                  printf("%c", RxFrame[a] >>1); //from call
+                        }
+                        ssid = RxFrame[framepos+6] >>1;
+                        if ( (ssid & 0x0F) !=  0)
+                                printf("-%d", ssid & 0x0F ); //SSID
 
-			if (  (RxFrame[framepos+6] & 0x80) == 0x80)
-					printf("*");
+                        if (  (RxFrame[framepos+6] & 0x80) == 0x80)
+                                        printf("*");
 
-			if ( (RxFrame[framepos+6] & 0x01) ==1) {
-				finished=TRUE;
-			} else {
-				framepos += 7;
-			}
-		}
-		framepos += 7;
-	}
+                        if ( (RxFrame[framepos+6] & 0x01) ==1) {
+                                finished=TRUE;
+                        } else {
+                                framepos += 7;
+                        }
+                }
+                framepos += 7;
+        }
 //printf("framepos=%d, len=%d", framepos,RXFrameLen);
-	a=0;
-	//Ctrl frame
-	if (       ((RxFrame[framepos] &  0x01) == 0)
-//		|| ( ((RxFrame[framepos] &  0x0f) == 0x0f) && ((RxFrame[framepos] &  0x1f) == 0x1f) )) {
-		|| ( (RxFrame[framepos] & 0x03) == 3) ) {
-		printf(" <I/U/S >");
-		framepos += 2;// iframe so also a PID
+        a=0;
+        //Ctrl frame
+        if (       ((RxFrame[framepos] &  0x01) == 0)
+//              || ( ((RxFrame[framepos] &  0x0f) == 0x0f) && ((RxFrame[framepos] &  0x1f) == 0x1f) )) {
+                || ( (RxFrame[framepos] & 0x03) == 3) ) {
+                printf(" <I/U/S/C/D>");
+                framepos += 2;// iframe so also a PID
 
-		printf("\n");
+                printf("\n");
 
-		if (TXRX) {
-			end=2; //TX includes FCD
-		} else {
-			end=3; // RX doesnt
-		}
-		for (a = framepos; a <=(RXFrameLen-end); a++) { //dont inc FCS
-			if ( (RxFrame[a] & 0x7f ) > 31 )
-				printf("%c", (RxFrame[a] & 0x7F) ); //makes it readable char
-			if ( (RxFrame[a] == 0x0D) && (a != (RXFrameLen-end)) ) {
-				printf("\n");
-			}
-		}
-	} else {
-		printf("\n");
-	}
-	if (a>0)
-	   printf("\n");
+                if (TXRX) {
+                        end=2; //TX includes FCD
+                } else {
+                        end=3; // RX doesnt
+                }
+
+                //currently chopping I frame ends by 1 char. differnet length for UI, <UI R> <UI C> I etc are the issue
+                // need to properly impliment frame type. This is no affecting KISS or TX pkts being sent.
+
+                for (a = framepos; a <=((RXFrameLen)-end); a++) { //dont inc FCS
+                        if ( (RxFrame[a] & 0x7f ) > 31 )
+                                printf("%c", (RxFrame[a] & 0x7F) ); //makes it readable char
+                        if ( (RxFrame[a] == 0x0D) && (a != (RXFrameLen-end)) ) {
+                                printf("\n");
+                        }
+                }
+        } else {
+                printf("\n");
+        }
+        if (a>0)
+           printf("\n");
 
 }
 
@@ -702,12 +706,12 @@ void ProcessFlag(struct BAYINFO * Baycom)
         {
 #ifdef DEBUG
                 printf("\r\nBAYCOM RX Data \r\n");
-		for (int i = 1; i <= Baycom->RXFrameLen-2; i++) { // dont include FCS bytes
- 			 printf("%02x ", Baycom->RxFrame[i-1]);
-			if (((i % 20)==0) && (i>0)) printf("\r\n");
-		}
-		printf("\r\n");
-		printf("FCS=%02x %02x\r\n",Baycom->RxFrame[Baycom->RXFrameLen], Baycom->RxFrame[Baycom->RXFrameLen-1]);
+                for (int i = 1; i <= Baycom->RXFrameLen-2; i++) { // dont include FCS bytes
+                         printf("%02x ", Baycom->RxFrame[i-1]);
+                        if (((i % 20)==0) && (i>0)) printf("\r\n");
+                }
+                printf("\r\n");
+                printf("FCS=%02x %02x\r\n",Baycom->RxFrame[Baycom->RXFrameLen], Baycom->RxFrame[Baycom->RXFrameLen-1]);
 #endif
 
         }
@@ -716,7 +720,7 @@ void ProcessFlag(struct BAYINFO * Baycom)
         {
                 // Check CRC
 #ifdef DEBUG
-		printf("checking CRC\t");
+                printf("checking CRC\t");
 #endif
 
                 USHORT crc = compute_crc(Baycom->RxFrame, Baycom->RXFrameLen);
@@ -733,24 +737,24 @@ void ProcessFlag(struct BAYINFO * Baycom)
                                         memcpy(buffptr+2, Baycom->RxFrame, Baycom->RXFrameLen);
                                         buffptr[1] = Baycom->RXFrameLen - 2; // *** NEED TO HANDLE > 256 ?
 
-					Baycom->RXBytes += Baycom->RXFrameLen;
+                                        Baycom->RXBytes += Baycom->RXFrameLen;
 
-					// decode callsigns & display packet data
-					DecodeCalls(Baycom->RxFrame,Baycom->RXFrameLen, 0);
+                                        // decode callsigns & display packet data
+                                        DecodeCalls(Baycom->RxFrame,Baycom->RXFrameLen, 0);
 
-					if (KISS_CONNECTED) {
-						send_KISS(buffptr);
-					}
-					Baycom->gooddecodes++;
+                                        if (KISS_CONNECTED) {
+                                                send_KISS(buffptr);
+                                        }
+                                        Baycom->gooddecodes++;
                                 } //if buffprt
-				free(buffptr);
+                                free(buffptr);
 
                         }
                         else
                         {
 #ifdef DEBUG
                                 // Bad CRC
-				printf("<<< BAD CRC >>>\r\n");
+                                printf("<<< BAD CRC >>>\r\n");
 #endif
 
                                 Baycom->RXERRORS++;
@@ -758,9 +762,9 @@ void ProcessFlag(struct BAYINFO * Baycom)
                 }
         }
 
-//	printf("\r\nBAD FRAME\r\n");
+//      printf("\r\nBAD FRAME\r\n");
         // Bad frame, not closing flag no buffers or whatever - set up for next frame
-	Baycom->DCD =FALSE;
+        Baycom->DCD =FALSE;
         PrepareNewFrame(Baycom);
         return;
 }
@@ -778,11 +782,11 @@ void RxBit(struct BAYINFO * Baycom, UCHAR NewBit)
         {
                 RxShiftReg |= 0x80;
                 Baycom->RXOneBits++;    // Another 1 bit
-//		Baycom->RxZeroBits=0; // broke our run of 0's
+//              Baycom->RxZeroBits=0; // broke our run of 0's
 
                 if (Baycom->RXOneBits   == 4)                   // 4 ones - start of header DCD =TRUE (or should it be 4 0x7e flags!!??)
                 {
-			Baycom->DCD = TRUE;
+                        Baycom->DCD = TRUE;
 
                 }
 
@@ -809,10 +813,10 @@ void RxBit(struct BAYINFO * Baycom, UCHAR NewBit)
                         return;                                 // Drop bit
                 }
                 Baycom->RXOneBits = 0;
-/*		Baycom->RxZeroBits++; //see if we get lots of 0 in a row?
-		if ( Baycom->RxZeroBits ==8 ) {
-			printf("\r\n\t\t\t###### ALL 0's #######\r\n");
-		}
+/*              Baycom->RxZeroBits++; //see if we get lots of 0 in a row?
+                if ( Baycom->RxZeroBits ==8 ) {
+                        printf("\r\n\t\t\t###### ALL 0's #######\r\n");
+                }
 */
                 // No need to or in zero bit
         }
@@ -826,8 +830,8 @@ void RxBit(struct BAYINFO * Baycom, UCHAR NewBit)
 
                 if (Len > MaxFrameLen) {
                         Baycom->RxFrameOK = FALSE;
-			printf("frame too large (%d)\r\n", Len);
-		}
+                        printf("frame too large (%d)\r\n", Len);
+                }
                 else
                         Baycom->RXFrameLen = Len;
         }
@@ -840,8 +844,7 @@ void RxBit(struct BAYINFO * Baycom, UCHAR NewBit)
 void ProcessSample(struct BAYINFO * Baycom, int Interval)
 {
         // Interval is time since previous input transition
-//        printf("%d  ", Baycom->PLLBitTime);
-	int BitTime = Baycom->PLLBitTime;
+        int BitTime = Baycom->PLLBitTime;
         int ReasonableError = BitTime / 5;
         int Bits = 0;
 
@@ -855,8 +858,8 @@ void ProcessSample(struct BAYINFO * Baycom, int Interval)
                 printf("Bittime = %d interval = %d\r\n", BitTime, Interval);
 #endif
                 Interval = BitTime * 10;                        // Long idles - 9 ones is plenty to abort and reset frame
-		Baycom->DCD = FALSE;
-		//printf("DCD=%d\t",Baycom->DCD);
+                Baycom->DCD = FALSE;
+                //printf("DCD=%d\t",Baycom->DCD);
         }
 
         while (Interval > BitTime + ReasonableError)            // Allow 5% error here
@@ -881,13 +884,12 @@ void ProcessSample(struct BAYINFO * Baycom, int Interval)
                 // Do we try to ignore spurious? Maybe once synced.
                 // for now, ignore, but dont use to converge dpll
 //                printf("Bittime = %d Residue interval = %d\r\n", BitTime, Interval);
-		Baycom->DCD = FALSE;
+                Baycom->DCD = FALSE;
                 return;
         }
 
         if (Interval)
         {
-//	printf(" B4 - P= %d, Int= %d ",Baycom->PLLBitTime,Interval);
                 Baycom->PLLBitTime += Interval /16;
                 if (Baycom->PLLBitTime > Baycom->MaxBitTime)
                         Baycom->PLLBitTime = Baycom->MaxBitTime;
@@ -895,7 +897,6 @@ void ProcessSample(struct BAYINFO * Baycom, int Interval)
                         if (Baycom->PLLBitTime < Baycom->MinBitTime)
                                 Baycom->PLLBitTime = Baycom->MinBitTime;
         }
-//       	printf("AF - P= %d, Int= %d",Baycom->PLLBitTime,Interval);
 
 }
 
@@ -904,13 +905,13 @@ void BaycomInit (int Port ) {
  int SysClock;
  uint64_t t;
  struct BAYINFO * Baycom;
+ struct timeval start, end;
 
    Baycom = BayList[Port] = zalloc(sizeof(struct BAYINFO));
    printf("Baycom Serial Modem Port %d\r\n", Port);
    fflush(stdout);
 
-	// calculate BITTIME
-   struct timeval start, end;
+   // calculate BITTIME
    gettimeofday(&start, NULL);
    sleep(1);
    gettimeofday(&end, NULL);
@@ -918,7 +919,7 @@ void BaycomInit (int Port ) {
    long micros = ((seconds * 1000000) + end.tv_usec) - (start.tv_usec);
    printf("Time elpased is %d seconds and %d micros\n", seconds, micros);
    SysClock = (double)micros;;
-   Speed = 1200;
+   Speed = BAUD;
 
    Baycom->BitTime = Baycom->PLLBitTime = (double)SysClock / (double)Speed;
 
@@ -926,7 +927,7 @@ void BaycomInit (int Port ) {
    Baycom->MinBitTime = 0.95 * SysClock / Speed;
    PrepareNewFrame(Baycom);
 
-   printf("Bit time = %d\tMax bittime =%d\t Min bittime=%d\n\r", Baycom->BitTime,Baycom->MaxBitTime, Baycom->MinBitTime);
+   printf("Bit time for %d BAUD = %d\tMax bittime =%d\t Min bittime=%d\n\r", BAUD,Baycom->BitTime,Baycom->MaxBitTime, Baycom->MinBitTime);
 
 }
 
@@ -935,34 +936,34 @@ void Ctrl_break_handler(int s){
            printf("\n\nSTATS:\nRX Good pkts= %d\r\n", BayList[1]->gooddecodes);
            printf("RXErrorss   = %d\r\n", BayList[1]->RXERRORS);
            printf("RXOverruns  = %d\r\n", BayList[1]->RXOverruns);
-	   printf("Closed BCM\r\n");
+           printf("Closed BCM\r\n");
            exit(1);
 }
 
 
 void RemoveFrom_TX_Q( struct BAYINFO * Baycom) {
 
-	pthread_mutex_lock(&TX_Q_lock);
+        pthread_mutex_lock(&TX_Q_lock);
 
 #ifdef DEBUG
-	printf("Trying to free TX_Q : ");
+        printf("Trying to free TX_Q : ");
 #endif
-	if( Baycom->fromBPQ_Q == 1) {
+        if( Baycom->fromBPQ_Q == 1) {
 #ifdef DEBUG
-	  printf("to null\r\n");
+          printf("to null\r\n");
 #endif
-	  free(TX_Queue[0]);
-	  TX_Queue=NULL;
-	} else {
+          free(TX_Queue[0]);
+          TX_Queue=NULL;
+        } else {
 #ifdef DEBUG
-	 printf("to %d\r\n", (Baycom->fromBPQ_Q-1));
+         printf("to %d\r\n", (Baycom->fromBPQ_Q-1));
 #endif
- 	 TX_Queue[0]=TX_Queue[1];
-	 TX_Queue = realloc(TX_Queue, (Baycom->fromBPQ_Q) * sizeof(struct TX_Q ));
-	}
+         TX_Queue[0]=TX_Queue[1];
+         TX_Queue = realloc(TX_Queue, (Baycom->fromBPQ_Q) * sizeof(struct TX_Q ));
+        }
 
-	Baycom->fromBPQ_Q--;
-	pthread_mutex_unlock(&TX_Q_lock);
+        Baycom->fromBPQ_Q--;
+        pthread_mutex_unlock(&TX_Q_lock);
 
 }
 
@@ -1011,20 +1012,18 @@ void Addto_TX_Q(BOOL ACK_FRAME,int ID1, int ID2,UCHAR * Frame, struct BAYINFO * 
 }
 
 
-
-
 /*********
 / Send TX Params to LKM
 /*********/
 void send_TXParam_LKM( struct BAYINFO * Baycom ) {
 
   int ret;
-  UCHAR txd_id[]={0xFF, Baycom->TXDELAY/10};					// TXDELAY /10 so it fits in a byte
+  UCHAR txd_id[]={0xFF, Baycom->TXDELAY/10};            // TXDELAY /10 so it fits in a byte
 #ifdef DEBUG
   printf("Sending %d bytes to LKM\r\n", sizeof(txd_arr));
 #endif
 
-  ret = write(LKM_fd, txd_id,sizeof(txd_id)); // Send the txdelay to the LKM
+  ret = write(LKM_fd, txd_id,sizeof(txd_id));           // Send the txdelay to the LKM
   if (ret < 0){
          perror("Failed to write the message to the device.");
   }
@@ -1054,33 +1053,33 @@ int Frame_start=1;
      printf("\nNormal KISS DataFrame\r\n");fflush(stdout);
 #endif
    }
- 	for (a=Frame_start; a< Len; a++) {
+        for (a=Frame_start; a< Len; a++) {
 
 #ifdef DEBUG
-	 printf("%02x ",Frame[a]);
-	 if ( (a >0) && (((a) % 20)==0)) printf("\n");
+         printf("%02x ",Frame[a]);
+         if ( (a >0) && (((a) % 20)==0)) printf("\n");
 
 #endif
-	  switch (Frame[a]) {
+          switch (Frame[a]) {
 
 
-	   case FESC:
-			if (Frame[a+1]==TFEND) {
-			    Frame_to_Send[framecount++]=FEND; //replace with FEND and inc past TFEND
-			    a++;
-			} else {
+           case FESC:
+                        if (Frame[a+1]==TFEND) {
+                            Frame_to_Send[framecount++]=FEND; //replace with FEND and inc past TFEND
+                            a++;
+                        } else {
                           if (Frame[a+1]==TFESC) {
                             Frame_to_Send[framecount++]=FESC;  //replace with FESC and inc past TFESC
-			    a++;
+                            a++;
                           }
-			}
-			break;
-	  default:
-		    Frame_to_Send[ framecount++ ]=Frame[a];
+                        }
+                        break;
+          default:
+                    Frame_to_Send[ framecount++ ]=Frame[a];
 
-	  }
+          }
 
-	}
+        }
 
   Frame_to_Send[0] = framecount ; //length of frame data
   FrameValid=1;
@@ -1088,23 +1087,23 @@ int Frame_start=1;
    // config frames
 
    if (LOBYTE(Frame[0]) ==0x01) {
-	Baycom->TXDELAY = Frame[1]*10;
-	printf("TXDelay = %dms\r\n", Baycom->TXDELAY);
-	send_TXParam_LKM(Baycom);
+        Baycom->TXDELAY = Frame[1]*10;
+        printf("TXDelay = %dms\r\n", Baycom->TXDELAY);
+        send_TXParam_LKM(Baycom);
    }
    if (LOBYTE(Frame[0]) == 0x02) {
         Baycom->PERSISTANCE = Frame[1];
         printf("Persistance = %d\r\n", Baycom->PERSISTANCE);
    }
    if (LOBYTE(Frame[0]) == 0x03) {
-	printf("SlotTime => Ignored\r\n");
+        printf("SlotTime => Ignored\r\n");
    }
    if (LOBYTE(Frame[0]) == 0x04) {
-	printf("TX Tail => Ignored\r\n");
+        printf("TX Tail => Ignored\r\n");
    }
    if (LOBYTE(Frame[0]) == 0x05) {
-	Baycom->FULLDUPLEX = Frame[1];
-	printf("FULLDUPLEX  = %s\r\n", Baycom->FULLDUPLEX > 0 ? "TRUE" : "FALSE");
+        Baycom->FULLDUPLEX = Frame[1];
+        printf("FULLDUPLEX  = %s\r\n", Baycom->FULLDUPLEX > 0 ? "TRUE" : "FALSE");
    }
  } // frame type
 
@@ -1112,20 +1111,20 @@ int Frame_start=1;
         UCHAR * Callbuffptr=calloc(framecount-1, sizeof(UCHAR));
         memcpy(Callbuffptr, Frame_to_Send+1, framecount-1);
 
-	DecodeCalls( Callbuffptr,framecount-1,1);  //take off length bit
-	free(Callbuffptr);
+        DecodeCalls( Callbuffptr,framecount-1,1);  //take off length bit
+        free(Callbuffptr);
 
 #ifdef DEBUG
-	printf("\r\nDecocded KISS FRAME B4 add to TX_Q (LEN=%d)\r\n", Frame_to_Send[0]);
-	for (x=0;x< framecount ; x++) {
-	  printf("%02x ", Frame_to_Send[x] );
-	  if ( (x >0) && (((x+1) % 20)==0)) printf("\n");
+        printf("\r\nDecocded KISS FRAME B4 add to TX_Q (LEN=%d)\r\n", Frame_to_Send[0]);
+        for (x=0;x< framecount ; x++) {
+          printf("%02x ", Frame_to_Send[x] );
+          if ( (x >0) && (((x+1) % 20)==0)) printf("\n");
 
-	}
-	printf("\r\n");
+        }
+        printf("\r\n");
 #endif
 
-	Addto_TX_Q(ACK_FRAME,ID1,ID2,Frame_to_Send, Baycom);
+        Addto_TX_Q(ACK_FRAME,ID1,ID2,Frame_to_Send, Baycom);
     }
 
     Frame_to_Send[0]=0; // null the sending frame
@@ -1134,22 +1133,17 @@ int Frame_start=1;
 
 void ShowVer() {
 
-	printf("\nG7TAJ BayCom Packet KISS driver for RasPi - Copyright � 2019 - Version %s \n", VERSION);
-	printf("Original BayCom code Copyright � 2001-2019 John Wiseman G8BPQ\n\n");
+        printf("\nG7TAJ BayCom Packet KISS driver for RasPi - Copyright � 2019 - Version %s \n", VERSION);
+        printf("Original BayCom code Copyright � 2001-2020 John Wiseman G8BPQ\n\n");
 }
 
 void printHelp() {
-	printf("\n\tUSAGE:\n\n"
-		   "\t\t-v  \tShow version information\n"
-		   "\t\t-pXX\tPTT GPIO physical pin\n"
-		   "\t\t-tXX\tTX  GPIO physical pin\n"
-		   "\t\t-rXX\tRX  GPIO physical pin\n"
-		   "\t\t-kXX\tKISS TCP port\n\n"
-		   "\te.g. [SUDO] ./piBaycom -p13 -r11 -t16 -k8515\n\n");
-
+        printf("\n\tUSAGE:\n\n"
+                   "\t\t-v  \tShow version information\n"
+                   "\t\t-kXX\tKISS TCP port\n\n"
+                   "\t\t-bXXXX\tModem speed [1200|300] optional default is 1200\n\n"
+                   "\te.g. ./BaycomKISS -k8515 [-b1200|300]\n\n");
 }
-
-
 
 
 void CheckArgs(int argc, char** argv) {
@@ -1168,19 +1162,19 @@ void CheckArgs(int argc, char** argv) {
                    ch = (int)argv[n][m];
                    switch( ch )
                    {
-		   case '?': printHelp();
-			     exit(0);
-			     break;
+                   case '?': printHelp();
+                             exit(0);
+                             break;
 
                    case 's':
                    case 'S': printf( "Showing Capture time data\n" );
-			     show_captures=1;
+                             show_captures=1;
                              break;
                    case 'v':              /* String parameter. */
                    case 'V': exit(0);
                              break;
-		   case 'K':
-		   case 'k': if( m + 1 >= l )
+                   case 'K':
+                   case 'k': if( m + 1 >= l )
                              {
                                puts( "Illegal syntax -- KISS port!" );
                                exit( 1 );
@@ -1188,17 +1182,33 @@ void CheckArgs(int argc, char** argv) {
                              else
                              {
                                strcpy( s, &argv[n][m+1] );
-			       KISSPORT = atoi(s);
+                               KISSPORT = atoi(s);
                              }
-			     x = 1;
-			     break;
+                             x = 1;
+                             break;
+
+                   case 'B':
+                   case 'b': if( m + 1 >= l )
+                             {
+                               puts( "Illegal syntax -- BAUD Rate!" );
+                               exit( 1 );
+                             }
+                             else
+                             {
+                               strcpy( s, &argv[n][m+1] );
+                               BAUD = atoi(s);
+                             }
+                             x = 1;
+                             break;
+
+
                    default:  printf( "Illegal option code = %c\n", ch );
                              exit( 1 );
                              break;
                    }
-		if (x==1) break;
-		}
-	}
+                if (x==1) break;
+                }
+        }
      }
     printf("KISSPORT=%d\n",KISSPORT);
 }
@@ -1227,10 +1237,11 @@ int main(int argc, char** argv) {
   UCHAR RXbuf[384];
   UCHAR tmpRXbuf[1024];
   int x, main_y, fd;
+  int RXCOUNT = 0;
   // instal sigpipe handler
   signal (SIGPIPE,sigpipe_handler);
 
-  struct sockaddr_in their_addr; /* connector's address information */
+  struct sockaddr_in their_addr;
   int new_fd;
   int sin_size;
   time_t start_t,end_t,diff_t;
@@ -1246,10 +1257,10 @@ int main(int argc, char** argv) {
 
   ShowVer();
   if (argc>1) {
-	CheckArgs(argc, argv);
+        CheckArgs(argc, argv);
   } else {
-	printHelp();
-	exit(0);
+        printHelp();
+        exit(0);
   }
 
 
@@ -1261,45 +1272,45 @@ int main(int argc, char** argv) {
   signal (SIGINT,Ctrl_break_handler);
 
   if ( !(fd=openSocket()) ) {
-	perror("Open KISS socket failed");
+        perror("Open KISS socket failed");
   }
   printf("TCP KISS Socket %d listening...\r\n",KISSPORT);
 
   LKM_fd=open_LKM();
   if (LKM_fd < 0 ) {
-	printf("Could not open the link to the LKM - is it loaded?\r\n");
-	exit(1);
+        printf("Could not open the link to the LKM - is it loaded?\r\n");
+        exit(1);
   }
-  send_TXParam_LKM(BayList[1]);					// Send TX Delay parameter to LKM
+  send_TXParam_LKM(BayList[1]);                                 // Send TX Delay parameter to LKM
 
   /**** Main Loop ****/
   while (1) {
 
    tmpbits=0;
     if (bitsRXed >= MinFrameLen) {
-//	printf("bits=%d\n",bitsRXed);
-   	tmpbits = bitsRXed;
-	bitsRXed=0;
+//      printf("bits=%d\n",bitsRXed);
+        tmpbits = bitsRXed;
+        bitsRXed=0;
 
-        for (x=0; x< tmpbits; x++) { //took out <=
-	   tmpbuff[x]=rxbuff[x];
-	}
+        for (x=0; x< tmpbits; x++) {
+           tmpbuff[x]=rxbuff[x];
+        }
      }
 
      if (tmpbits>0) {
 
        for (x=0; x< tmpbits; x++) {
-	  ProcessSample(BayList[1], tmpbuff[x]);
+          ProcessSample(BayList[1], tmpbuff[x]);
        }
      }
 
-	if (BayList[1]->DCD && tmpbits==0) {
+        if (BayList[1]->DCD && tmpbits==0) {
             BayList[1]->DCD = FALSE;
-	}
+        }
 
 
 
-	//TCP part
+        //TCP part
     if (!KISS_CONNECTED) {
         client_socket_fd = accept(fd, NULL, NULL);
         if (client_socket_fd == -1) {
@@ -1317,43 +1328,40 @@ int main(int argc, char** argv) {
     }
       if (KISS_CONNECTED) {
 
-	//see if data waiting on port and add to KISSBUFF
-	int rxbytes = recv(KISS_CONNECTED, tmpRXbuf, sizeof(tmpRXbuf), 0);
-	if (rxbytes != -1)
-    	{
+        //see if data waiting on port and add to KISSBUFF
+        int rxbytes = recv(KISS_CONNECTED, tmpRXbuf, sizeof(tmpRXbuf), 0);
+        if (rxbytes != -1)
+        {
 #ifdef DEBUG
-		printf("KISS RXbytes=%d\r\n",rxbytes);
+                printf("KISS RXbytes=%d\r\n",rxbytes);
 #endif
-		for (int x=0; x< rxbytes;x++){
+                for (int x=0; x< rxbytes;x++){
 #ifdef DEBUG
-		  printf("%02x ",tmpRXbuf[x]);
-		  if ( (x >0) && (((x+1) % 20)==0)) printf("\n");
+                  printf("%02x ",tmpRXbuf[x]);
+                  if ( (x >0) && (((x+1) % 20)==0)) printf("\n");
 #endif
-		  if (tmpRXbuf[x]==FEND) {
-		    if (KISSFRAME_START) {
-			//end of frame? - send buff to decode KISS -possibly causing errors on FEND FEND <data> FEND ??
-			DecodeKISS(RXbuf,main_y,BayList[1]);
-			KISSFRAME_START=FALSE;
-			main_y=0;
-		    } else {
-		      KISSFRAME_START=TRUE;
-		      main_y=0;
- 		    }
-		  } else { // FEND
-		    RXbuf[main_y++]=tmpRXbuf[x];
-		  } // KISS Frame data
-		}
-	} //If RXBytes != -1
+                  if (tmpRXbuf[x]==FEND) {
+                    if (KISSFRAME_START) {
+                        //end of frame? - send buff to decode KISS -possibly causing errors on FEND FEND <data> FEND ??
+                        DecodeKISS(RXbuf,main_y,BayList[1]);
+                        KISSFRAME_START=FALSE;
+                        main_y=0;
+                    } else {
+                      KISSFRAME_START=TRUE;
+                      main_y=0;
+                    }
+                  } else { // FEND
+                    RXbuf[main_y++]=tmpRXbuf[x];
+                  } // KISS Frame data
+                }
+        } //If RXBytes != -1
 
-	//check if TCP port has been closed
-
-//	char buffer[1];
-//	if (recv(KISS_CONNECTED, buffer, sizeof(buffer), MSG_PEEK | MSG_DONTWAIT) == 0) {
-	if (recv(KISS_CONNECTED, NULL, 0, MSG_PEEK | MSG_DONTWAIT) == 0) {
-		printf("KISS Port (ID=%d) Closed!\r\n",KISS_CONNECTED);
-	        close(KISS_CONNECTED);
-		KISS_CONNECTED=0;
-	}
+        //check if TCP port has been closed
+        if (recv(KISS_CONNECTED, NULL, 0, MSG_PEEK | MSG_DONTWAIT) == 0) {
+                printf("KISS Port (ID=%d) Closed!\r\n",KISS_CONNECTED);
+                close(KISS_CONNECTED);
+                KISS_CONNECTED=0;
+        }
 
       } //If KISSCONNECTED ( TCP Port connected)
 
@@ -1361,35 +1369,35 @@ int main(int argc, char** argv) {
 
         if ( TXCOUNT < 1) {
           CheckTX(BayList[1]);
-	  TXCOUNT=10;
+          TXCOUNT=10;
         } else {
           TXCOUNT--;
-	}
-	if (TXCOUNT ==5)
-	 	get_toggles(LKM_fd);
+        }
 
-
-
-	usleep( 10000 );  //10ms
-
+        usleep( 10000 );  //10ms
         // 100ms (10x10)-> acts as slottime for TX too
 
+        time(&end_t);
+        diff_t = difftime(end_t, start_t);
 
-	time(&end_t);
-	diff_t = difftime(end_t, start_t);
 
+        if (RXCOUNT >= 5) {
+                get_toggles(LKM_fd);
+                RXCOUNT=5;
+        }
+        RXCOUNT++;
 
-	// display stats every 15 seconds
-	if (diff_t > 30) {
+        // display stats every 30 seconds
+        if (diff_t > 30) {
 
-	        printf("\n\nSTATS:\nRX Good pkts: %d\r\n", BayList[1]->gooddecodes);
-		printf("TXBytes     :\t%.3fK\n" ,(float)(BayList[1]->TXBytes/(float)1000));
-		printf("RXBytes     :\t%.3fK\n" ,(float)(BayList[1]->RXBytes/(float)1000));
-	        printf("RXErrorss   : %d\n"     , BayList[1]->RXERRORS);
-           	printf("RXOverruns  : %d\n\n"   , BayList[1]->RXOverruns);
-		start_t = end_t;
+                printf("\n\nSTATS:\nRX Good pkts: %d\r\n", BayList[1]->gooddecodes);
+                printf("TXBytes     :\t%.3fK\n" ,(float)(BayList[1]->TXBytes/(float)1000));
+                printf("RXBytes     :\t%.3fK\n" ,(float)(BayList[1]->RXBytes/(float)1000));
+                printf("RXErrorss   : %d\n"     , BayList[1]->RXERRORS);
+                printf("RXOverruns  : %d\n\n"   , BayList[1]->RXOverruns);
+                start_t = end_t;
 
-	}
+        }
 }
 
     return (EXIT_SUCCESS);
